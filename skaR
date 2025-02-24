@@ -1,0 +1,247 @@
+#!/usr/bin/env python3
+import os
+import sys
+import subprocess
+import importlib
+
+# Function to check and install dependencies
+def install_dependencies():
+    dependencies = ["nmap", "pyfiglet"]
+    for dep in dependencies:
+        try:
+            importlib.import_module(dep)
+        except ImportError:
+            print(f"Installing {dep}...")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "--break-system-packages", dep])
+
+# Install dependencies if not already installed
+install_dependencies()
+
+import nmap
+import ipaddress
+from pyfiglet import figlet_format
+
+# Global variables to store user selections
+selected_targets = []
+scan_options = ""
+
+# Nmap scan presets
+scan_presets = {
+    "quick": "-T4 -F --version-light",  # Fast scan for common ports
+    "standard": "-T3 -sV",              # Balanced scan with version detection
+    "deep": "-T2 -A -p-",               # Thorough scan with OS detection and scripts
+    "stealth": "-sS -T2 --max-retries 1 --min-rate 100"  # Stealthy SYN scan
+}
+
+def is_valid_ip(ip):
+    """Validate IP address or range."""
+    try:
+        ipaddress.ip_network(ip, strict=False)
+        return True
+    except ValueError:
+        return False
+
+def discover_hosts(network):
+    """Discover live hosts on the specified network range."""
+    try:
+        nm = nmap.PortScanner()
+        nm.scan(hosts=network, arguments='-sn')  # Ping scan for host discovery
+        live_hosts = [host for host in nm.all_hosts() if nm[host].state() == 'up']
+        return live_hosts
+    except Exception as e:
+        print(f"Error during discovery: {e}")
+        return []
+
+def set_target():
+    """Set targets for scanning, either manually or via interface discovery."""
+    global selected_targets
+    print("\nSet Target:")
+    print("1. Manual input")
+    print("2. Discover on interface")
+    choice = input("Select an option: ")
+    
+    if choice == "1":
+        targets = input("Enter targets (space-separated IPs or ranges): ")
+        selected_targets = targets.split()
+        # Validate targets
+        for target in selected_targets:
+            if not is_valid_ip(target):
+                print(f"Invalid IP or range: {target}")
+                selected_targets = []
+                return
+    elif choice == "2":
+        interface = input("Enter interface name (e.g., eth0): ")
+        network = input("Enter network range (e.g., 192.168.1.0/24): ")
+        if not is_valid_ip(network):
+            print("Invalid network range.")
+            return
+        live_hosts = discover_hosts(network)
+        if not live_hosts:
+            print("No live hosts found.")
+            return
+        print("\nLive hosts discovered:")
+        for i, host in enumerate(live_hosts, 1):
+            print(f"{i}. {host}")
+        selection = input("Enter numbers to select (comma-separated) or 'all': ")
+        if selection.lower() == "all":
+            selected_targets = live_hosts
+        else:
+            try:
+                indices = [int(x.strip()) for x in selection.split(",")]
+                selected_targets = [live_hosts[i-1] for i in indices if 1 <= i <= len(live_hosts)]
+            except ValueError:
+                print("Invalid selection.")
+                selected_targets = []
+    else:
+        print("Invalid option.")
+
+def set_scan_type():
+    """Set the scan type, either preset or custom."""
+    global scan_options
+    print("\nSet Scan Type:")
+    print("1. Quick scan")
+    print("2. Standard scan")
+    print("3. Deep scan")
+    print("4. Stealth scan")
+    print("5. Custom")
+    choice = input("Select an option: ")
+    
+    presets = ["quick", "standard", "deep", "stealth"]
+    if choice in ["1", "2", "3", "4"]:
+        scan_options = scan_presets[presets[int(choice)-1]]
+    elif choice == "5":
+        scan_options = input("Enter custom Nmap flags: ")
+    else:
+        print("Invalid option.")
+
+def show_settings():
+    """Display current selected targets and scan options."""
+    print("\nCurrent Settings:")
+    print(f"Targets: {', '.join(selected_targets) if selected_targets else 'None'}")
+    print(f"Scan options: {scan_options if scan_options else 'None'}")
+
+def run_scan():
+    """Execute the scan with selected targets and options."""
+    if not selected_targets:
+        print("No targets selected.")
+        return
+    if not scan_options:
+        print("No scan options set.")
+        return
+    
+    hosts = " ".join(selected_targets)
+    nm = nmap.PortScanner()
+    try:
+        print(f"\nRunning scan on {hosts} with options: {scan_options}")
+        nm.scan(hosts=hosts, arguments=scan_options)
+        
+        # Option to save results
+        save = input("Save results to file? (y/n): ")
+        if save.lower() == "y":
+            filename = input("Enter filename: ")
+            with open(filename, "w") as f:
+                f.write(nm.get_nmap_last_output())
+            print(f"Results saved to {filename}")
+        
+        # Display results
+        for host in nm.all_hosts():
+            print(f"\nHost: {host} ({nm[host].state()})")
+            for proto in nm[host].all_protocols():
+                ports = nm[host][proto].keys()
+                for port in ports:
+                    state = nm[host][proto][port]['state']
+                    service = nm[host][proto][port]['name']
+                    print(f"{port}/{proto} {state} {service}")
+    except Exception as e:
+        print(f"Scan failed: {e}")
+
+def print_banner():
+    from pyfiglet import Figlet
+    
+    # Use a bolder, more compact font for maximum impact
+    custom_fig = Figlet(font="banner3")
+    
+    # Create the main banner text
+    banner_text = custom_fig.renderText("SKAR")
+    
+    # Define styling constants for a bold, professional look
+    RESET = "\033[0m"
+    BOLD = "\033[1m"
+    
+    # Use more vibrant, impactful colors
+    PRIMARY = "\033[38;5;28m"      # Deep green
+    ACCENT = "\033[38;5;34m"       # Medium green
+    HIGHLIGHT = "\033[38;5;118m"   # Bright green
+    DARK = "\033[38;5;236m"        # Nearly black for background effect
+    
+    # Apply 3D-like styling to the banner for a bolder appearance
+    lines = banner_text.split('\n')
+    
+    # Reduce spacing by filtering out empty lines and trimming
+    content_lines = [line for line in lines if line.strip()]
+    
+    # Print each line with enhanced styling
+    for line in content_lines:
+        # Create 3D effect with background characters
+        shadow_line = ""
+        for char in line:
+            if char != ' ':
+                # Apply bold shadow effect for depth
+                shadow_line += f"{BOLD}{DARK}{char}{RESET}"
+            else:
+                shadow_line += char
+                
+        # Print the actual line with offset for 3D effect
+        styled_line = ""
+        for char in line:
+            if char != ' ':
+                # Apply bold primary color
+                styled_line += f"{BOLD}{PRIMARY}{char}{RESET}"
+            else:
+                styled_line += char
+        
+        # Print with reduced spacing
+        print(styled_line)
+    
+    # Add a compact, impactful tagline directly under the banner
+    tagline = "[FAST·ACCURATE·STEALTHY]"
+    print(f"{BOLD}{ACCENT}{tagline}{RESET}")
+    
+    # Add a minimal but bold separator
+    separator = "=" * len(tagline)
+    print(f"{BOLD}{HIGHLIGHT}{separator}{RESET}")
+    
+    # Add version info on the same line as status for maximum compactness
+    print(f"{BOLD}{ACCENT}v1.0.3 {HIGHLIGHT}READY{RESET}")
+
+def main():
+    print_banner()
+    while True:
+        print("\nMain Menu:")
+        print("1. Set target")
+        print("2. Set scan type")
+        print("3. Show current settings")
+        print("4. Run scan")
+        print("5. Exit")
+        print("=" * 40)
+        choice = input("Select an option: ")
+        
+        if choice == "1":
+            set_target()
+        elif choice == "2":
+            set_scan_type()
+        elif choice == "3":
+            show_settings()
+        elif choice == "4":
+            run_scan()
+        elif choice == "5":
+            sys.exit(0)
+        else:
+            print("Invalid option.")
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\nExiting...")
+        sys.exit(0)
